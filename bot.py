@@ -1,18 +1,36 @@
 import os
 import json
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from telegram import ReplyKeyboardMarkup
-from telegram.ext import ConversationHandler
 
-CHOOSING, INCOME_AMOUNT, EXPENSE_AMOUNT, COMMENT = range(4)
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    ConversationHandler,
+    filters,
+)
 
 TOKEN = os.getenv("BOT_TOKEN")
 
 DATA_FILE = "data.json"
 
+# ===== СОСТОЯНИЯ =====
+MENU, INCOME_AMOUNT, EXPENSE_AMOUNT, COMMENT = range(4)
 
-# ===== база =====
+# ===== КЛАВИАТУРА =====
+keyboard = [
+    ["💰 Доход", "➖ Расход"],
+    ["📊 Баланс"]
+]
+
+reply_markup = ReplyKeyboardMarkup(
+    keyboard,
+    resize_keyboard=True
+)
+
+
+# ===== БАЗА =====
 def load_data():
     try:
         with open(DATA_FILE, "r") as f:
@@ -26,78 +44,16 @@ def save_data(data):
         json.dump(data, f)
 
 
-# ===== команды =====
-
+# ===== START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "💰 Финансовый бот",
-        reply_markup=reply_markup
-    )
-    keyboard = [
-        ["💰 Доход", "➖ Расход"],
-        ["📊 Баланс"]
-    ]
-
-    reply_markup = ReplyKeyboardMarkup(
-        keyboard,
-        resize_keyboard=True
-    )
-
     await update.message.reply_text(
         "💰 Финансовый бот готов",
         reply_markup=reply_markup
     )
+    return MENU
 
 
-async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load_data()
-
-    try:
-        amount = int(context.args[0])
-        comment = " ".join(context.args[1:])
-    except:
-        await update.message.reply_text("Ошибка.\nПример: /add -500 еда")
-        return
-
-    data["balance"] += amount
-    data["operations"].append({
-        "amount": amount,
-        "comment": comment
-    })
-
-    save_data(data)
-
-    await update.message.reply_text(
-        f"✅ Записано: {amount}\n"
-        f"💬 {comment}\n"
-        f"💰 Баланс: {data['balance']}"
-    )
-
-
-async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = load_data()
-    await update.message.reply_text(f"💰 Баланс: {data['balance']}")
-
-from telegram.ext import MessageHandler, filters
-
-
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-
-    if text == "📊 Баланс":
-        data = load_data()
-        await update.message.reply_text(f"💰 Баланс: {data['balance']}")
-
-    elif text == "💰 Доход":
-        await update.message.reply_text(
-            "Введите:\n/add +1000 источник"
-        )
-
-    elif text == "➖ Расход":
-        await update.message.reply_text(
-            "Введите:\n/add -500 категория"
-        )
-
+# ===== МЕНЮ =====
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
@@ -105,28 +61,44 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Введите сумму дохода:")
         return INCOME_AMOUNT
 
-    if text == "➖ Расход":
+    elif text == "➖ Расход":
         await update.message.reply_text("Введите сумму расхода:")
         return EXPENSE_AMOUNT
 
-    if text == "📊 Баланс":
+    elif text == "📊 Баланс":
         data = load_data()
-        await update.message.reply_text(f"Баланс: {data['balance']}")
-        return ConversationHandler.END
+        await update.message.reply_text(
+            f"💰 Баланс: {data['balance']}",
+            reply_markup=reply_markup
+        )
+        return MENU
+
+    return MENU
 
 
+# ===== ДОХОД =====
 async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["amount"] = int(update.message.text)
-    await update.message.reply_text("Источник дохода?")
-    return COMMENT
+    try:
+        context.user_data["amount"] = int(update.message.text)
+        await update.message.reply_text("Источник дохода?")
+        return COMMENT
+    except:
+        await update.message.reply_text("Введите число")
+        return INCOME_AMOUNT
 
 
+# ===== РАСХОД =====
 async def expense_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["amount"] = -int(update.message.text)
-    await update.message.reply_text("Категория расхода?")
-    return COMMENT
+    try:
+        context.user_data["amount"] = -int(update.message.text)
+        await update.message.reply_text("Категория расхода?")
+        return COMMENT
+    except:
+        await update.message.reply_text("Введите число")
+        return EXPENSE_AMOUNT
 
 
+# ===== СОХРАНЕНИЕ =====
 async def save_operation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
 
@@ -142,28 +114,29 @@ async def save_operation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_data(data)
 
     await update.message.reply_text(
-        f"✅ Сохранено\n{amount} | {comment}",
+        f"✅ Сохранено\n{amount} | {comment}\n💰 Баланс: {data['balance']}",
         reply_markup=reply_markup
     )
 
-    return ConversationHandler.END
+    return MENU
 
 
-# ===== запуск =====
+# ===== ЗАПУСК =====
 app = ApplicationBuilder().token(TOKEN).build()
 
 conv_handler = ConversationHandler(
-    entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, menu)],
+    entry_points=[CommandHandler("start", start)],
     states={
+        MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, menu)],
         INCOME_AMOUNT: [MessageHandler(filters.TEXT, income_amount)],
         EXPENSE_AMOUNT: [MessageHandler(filters.TEXT, expense_amount)],
         COMMENT: [MessageHandler(filters.TEXT, save_operation)],
     },
-    fallbacks=[]
+    fallbacks=[CommandHandler("start", start)],
 )
 
-app.add_handler(CommandHandler("start", start))
 app.add_handler(conv_handler)
 
+print("BOT STARTED")
+
 app.run_polling()
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, buttons))
