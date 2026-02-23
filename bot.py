@@ -3,6 +3,9 @@ import json
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram import ReplyKeyboardMarkup
+from telegram.ext import ConversationHandler
+
+CHOOSING, INCOME_AMOUNT, EXPENSE_AMOUNT, COMMENT = range(4)
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -26,7 +29,10 @@ def save_data(data):
 # ===== команды =====
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
+    await update.message.reply_text(
+        "💰 Финансовый бот",
+        reply_markup=reply_markup
+    )
     keyboard = [
         ["💰 Доход", "➖ Расход"],
         ["📊 Баланс"]
@@ -92,13 +98,72 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Введите:\n/add -500 категория"
         )
 
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "💰 Доход":
+        await update.message.reply_text("Введите сумму дохода:")
+        return INCOME_AMOUNT
+
+    if text == "➖ Расход":
+        await update.message.reply_text("Введите сумму расхода:")
+        return EXPENSE_AMOUNT
+
+    if text == "📊 Баланс":
+        data = load_data()
+        await update.message.reply_text(f"Баланс: {data['balance']}")
+        return ConversationHandler.END
+
+
+async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["amount"] = int(update.message.text)
+    await update.message.reply_text("Источник дохода?")
+    return COMMENT
+
+
+async def expense_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["amount"] = -int(update.message.text)
+    await update.message.reply_text("Категория расхода?")
+    return COMMENT
+
+
+async def save_operation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_data()
+
+    amount = context.user_data["amount"]
+    comment = update.message.text
+
+    data["balance"] += amount
+    data["operations"].append({
+        "amount": amount,
+        "comment": comment
+    })
+
+    save_data(data)
+
+    await update.message.reply_text(
+        f"✅ Сохранено\n{amount} | {comment}",
+        reply_markup=reply_markup
+    )
+
+    return ConversationHandler.END
+
 
 # ===== запуск =====
 app = ApplicationBuilder().token(TOKEN).build()
 
+conv_handler = ConversationHandler(
+    entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, menu)],
+    states={
+        INCOME_AMOUNT: [MessageHandler(filters.TEXT, income_amount)],
+        EXPENSE_AMOUNT: [MessageHandler(filters.TEXT, expense_amount)],
+        COMMENT: [MessageHandler(filters.TEXT, save_operation)],
+    },
+    fallbacks=[]
+)
+
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("add", add))
-app.add_handler(CommandHandler("balance", balance))
+app.add_handler(conv_handler)
 
 app.run_polling()
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, buttons))
